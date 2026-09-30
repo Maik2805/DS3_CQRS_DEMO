@@ -1,0 +1,124 @@
+﻿# Wallet CQRS + Event Sourcing POC â€” single-file stack orchestration (task 12.1).
+#
+# Four services with health-gated startup ordering (Req 15.1, 15.5):
+#
+#   axon-server    -> Event Store (context: wallet); UI 8024, gRPC 8124 (Req 7.2)
+#   postgres-read  -> Read Model database wallet_read; host port 5433
+#   write-service  -> Java 21 / Spring Boot 4 / Axon Framework 5; host port 8081
+#   read-service   -> TypeScript / NestJS 11 (no Axon Framework); host port 8082
+#
+# Host port map (Req 7.3, 15.3): Write API 8081, Read API 8082,
+# Axon Server UI 8024, Axon Server gRPC 8124, PostgreSQL 5433.
+#
+# Credentials are NOT hardcoded here (Req 15.6): READ_DB_PASSWORD and ADMIN_TOKEN are
+# read from a local `.env` file (copy `.env.example` -> `.env`). Bring the stack up with:
+#
+#   docker compose up --build            (Req 15.2)
+
+services:
+  # --- Event Store: Axon Server 2026.0.6 (context "wallet") ---
+  axon-server:
+    image: docker.axoniq.io/axoniq/axonserver:2026.0.6
+    ports:
+      - "8024:8024"   # HTTP UI / REST API
+      - "8124:8124"   # gRPC (command/event/query + persistent streams)
+    environment:
+      # Standalone DCB mode: Axon Server initializes a single "default" context with
+      # Dynamic Consistency Boundary (DCB) storage enabled. Axon Framework 5's tagged /
+      # criteria-based event model (@EventSourced + @EventCriteriaBuilder) requires a DCB
+      # context; a classic (non-DCB) context rejects appends with AXONIQ-2308. This mirrors
+      # the official AxonIQ university-demo compose (STANDALONE_DCB + DEVMODE).
+      AXONIQ_AXONSERVER_HOSTNAME: axon-server
+      AXONIQ_AXONSERVER_STANDALONE_DCB: "true"
+      AXONIQ_AXONSERVER_DEVMODE_ENABLED: "true"
+    volumes:
+      - axon-data:/axonserver/data       # persistence across restarts (Req 7.2, required)
+      - axon-events:/axonserver/events   # event log persistence across restarts (Req 7.2)
+    healthcheck:
+      # The axonserver image runs on a JDK base (bash present) but ships no curl/wget.
+      # Probe the actuator health endpoint over a bash /dev/tcp socket â€” tool-independent
+      # and true only once the HTTP port is accepting connections.
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8024' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # --- Read Model store: PostgreSQL 16 (database wallet_read) ---
+  postgres-read:
+    image: postgres:16
+    ports:
+      - "5433:5432"   # host 5433 -> container 5432 (Req 15.3)
+    environment:
+      POSTGRES_DB: wallet_read
+      POSTGRES_USER: wallet_read
+      POSTGRES_PASSWORD: ${READ_DB_PASSWORD}   # from .env â€” never hardcoded (Req 15.6)
+    volumes:
+      # Schema bootstrap: init.sql runs once on an empty data directory.
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pg-data:/var/lib/postgresql/data       # Read Model persistence
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wallet_read -d wallet_read"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # --- Write Side: Java 21 / Spring Boot 4 / Axon Framework 5 ---
+  write-service:
+    build: ./write-service
+    ports:
+      - "8081:8080"   # host 8081 -> container 8080 (Req 15.3)
+    environment:
+      AXON_SERVER_HOST: axon-server
+      AXON_SERVER_PORT: 8124
+      AXON_SERVER_CONTEXT: default
+    depends_on:
+      axon-server:
+        condition: service_healthy   # do not start until the Event Store is ready (Req 15.5)
+    healthcheck:
+      # eclipse-temurin:21-jre is Debian-based (bash present) but ships no curl/wget.
+      # Probe /actuator/health via a bash /dev/tcp socket on the container-internal port 8080.
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8080' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # --- Read Side: TypeScript / NestJS 11 (no Axon Framework) ---
+  read-service:
+    build: ./read-service
+    ports:
+      - "8082:3000"   # host 8082 -> container 3000 (Req 15.3)
+    environment:
+      # PostgreSQL Read Model connection (container-internal port 5432).
+      READ_DB_HOST: postgres-read
+      READ_DB_PORT: 5432
+      READ_DB_NAME: wallet_read
+      READ_DB_USER: wallet_read
+      READ_DB_PASSWORD: ${READ_DB_PASSWORD}    # from .env â€” never hardcoded (Req 15.6)
+      # Axon Server admin API + persistent-stream registration / rebuild wiring.
+      AXON_ADMIN_URL: http://axon-server:8024
+      AXON_CONTEXT: default
+      PERSISTENT_STREAM_NAME: wallet-read-projection
+      ADMIN_ENDPOINT_NAME: wallet-read-service
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}                       # optional; empty leaves rebuild unguarded
+      READ_PROJECTION_DELAY_MS: ${READ_PROJECTION_DELAY_MS:-0}  # eventual-consistency demo delay in ms (default 0 = no delay)
+    depends_on:
+      axon-server:
+        condition: service_healthy   # Event Store must be ready for stream registration (Req 15.5)
+      postgres-read:
+        condition: service_healthy   # Read Model DB must be ready for projections (Req 15.5)
+    healthcheck:
+      # node:22-alpine ships busybox wget; probe the /health liveness endpoint on port 3000.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+# Named volumes for persistence across container restarts (Req 7.2).
+volumes:
+  axon-data: {}
+  axon-events: {}
+  pg-data: {}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/wallet-cqrs-poc/contracts/events/money-withdrawn.v1.schema.json",
+  "title": "MoneyWithdrawn v1",
+  "description": "Domain event emitted when money is withdrawn from a wallet. Shared JSON contract between the Java Write Side and the TypeScript Read Side; not a compiled class.",
+  "type": "object",
+  "properties": {
+    "eventType": {
+      "type": "string",
+      "const": "MoneyWithdrawn",
+      "description": "Past-tense domain event name, independent of any internal Java class name."
+    },
+    "eventVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Contract version, used to teach contract evolution."
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique event identifier used by the Read Side for idempotent projection."
+    },
+    "walletId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-form non-empty wallet identifier (not a UUID format)."
+    },
+    "amount": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Withdrawn amount, strictly greater than zero."
+    },
+    "currency": {
+      "type": "string",
+      "const": "COP",
+      "description": "Fixed POC currency (Colombian Peso)."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the event occurred (ISO-8601 date-time)."
+    }
+  },
+  "required": ["eventType", "eventVersion", "eventId", "walletId", "amount", "currency", "occurredAt"],
+  "additionalProperties": false
+}

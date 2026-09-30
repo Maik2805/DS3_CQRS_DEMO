@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      Write Service - Java 21 / Spring Boot 4.x / Axon Framework 5.x
+      Reference versions (may be adjusted later per repo-root versions.md; never use `latest`):
+        - Spring Boot     : 4.1.1
+        - Axon Framework  : 5.3.0 (org.axonframework:axon-framework-bom)
+        - Java            : 21
+      Note: in Axon Framework 5 the Spring Boot starter is io.axoniq.framework:axoniq-spring-boot-starter,
+      and the Axon Server connector (io.axoniq.framework:axon-server-connector) is REQUIRED for the app
+      to actually connect to Axon Server. Without the connector the app silently falls back to an
+      in-memory event store. The io.axoniq.framework:* artifacts are NOT managed by axon-framework-bom
+      (that BOM only manages org.axonframework:* modules), so their version is pinned via ${axon.version}.
+    -->
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.1</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.example.wallet</groupId>
+    <artifactId>write-service</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>write-service</name>
+    <description>Wallet CQRS POC - Write Side (Spring Boot + Axon Framework)</description>
+
+    <properties>
+        <java.version>21</java.version>
+        <axon.version>5.3.0</axon.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Axon Framework 5.x BOM aligns all Axon module versions -->
+            <dependency>
+                <groupId>org.axonframework</groupId>
+                <artifactId>axon-framework-bom</artifactId>
+                <version>${axon.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Axon Framework 5 Spring Boot integration (auto-config, command/event bus wiring).
+             Pinned to ${axon.version} because io.axoniq.framework:* is not in axon-framework-bom. -->
+        <dependency>
+            <groupId>io.axoniq.framework</groupId>
+            <artifactId>axoniq-spring-boot-starter</artifactId>
+            <version>${axon.version}</version>
+        </dependency>
+        <!-- Axon Server connector: REQUIRED so events are stored in / published from Axon Server.
+             Without this the app defaults to an in-memory event store and never connects. -->
+        <dependency>
+            <groupId>io.axoniq.framework</groupId>
+            <artifactId>axon-server-connector</artifactId>
+            <version>${axon.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

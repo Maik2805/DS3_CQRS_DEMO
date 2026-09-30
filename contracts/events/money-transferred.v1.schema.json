@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/wallet-cqrs-poc/contracts/events/money-transferred.v1.schema.json",
+  "title": "MoneyTransferred v1",
+  "description": "Domain event emitted when money is transferred between two wallets as a single business fact. Shared JSON contract between the Java Write Side and the TypeScript Read Side; not a compiled class.",
+  "type": "object",
+  "properties": {
+    "eventType": {
+      "type": "string",
+      "const": "MoneyTransferred",
+      "description": "Past-tense domain event name, independent of any internal Java class name."
+    },
+    "eventVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Contract version, used to teach contract evolution."
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique event identifier used by the Read Side for idempotent projection."
+    },
+    "transferId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-form non-empty transfer identifier, used for Write Side idempotency (not a UUID format)."
+    },
+    "sourceWalletId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-form non-empty source wallet identifier (not a UUID format)."
+    },
+    "targetWalletId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-form non-empty target wallet identifier (not a UUID format)."
+    },
+    "amount": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Transferred amount, strictly greater than zero."
+    },
+    "currency": {
+      "type": "string",
+      "const": "COP",
+      "description": "Fixed POC currency (Colombian Peso)."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the event occurred (ISO-8601 date-time)."
+    }
+  },
+  "required": ["eventType", "eventVersion", "eventId", "transferId", "sourceWalletId", "targetWalletId", "amount", "currency", "occurredAt"],
+  "additionalProperties": false
+}

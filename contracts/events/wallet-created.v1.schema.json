@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/wallet-cqrs-poc/contracts/events/wallet-created.v1.schema.json",
+  "title": "WalletCreated v1",
+  "description": "Domain event emitted when a wallet is created. Shared JSON contract between the Java Write Side and the TypeScript Read Side; not a compiled class.",
+  "type": "object",
+  "properties": {
+    "eventType": {
+      "type": "string",
+      "const": "WalletCreated",
+      "description": "Past-tense domain event name, independent of any internal Java class name."
+    },
+    "eventVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Contract version, used to teach contract evolution."
+    },
+    "walletId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-form non-empty wallet identifier (not a UUID format)."
+    },
+    "ownerId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-form non-empty owner identifier (not a UUID format)."
+    },
+    "currency": {
+      "type": "string",
+      "const": "COP",
+      "description": "Fixed POC currency (Colombian Peso)."
+    }
+  },
+  "required": ["eventType", "eventVersion", "walletId", "ownerId", "currency"],
+  "additionalProperties": false
+}

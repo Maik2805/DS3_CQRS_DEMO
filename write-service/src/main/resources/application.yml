@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: write-service
+  # --- JSON event serialization (task 3.4, requirement 7.1) ---
+  # No explicit spring.jackson.serialization config is needed on Spring Boot 4 / Jackson 3:
+  #   * java.time types (occurredAt: Instant) serialize as ISO-8601 date-time strings by default
+  #     (WRITE_DATES_AS_TIMESTAMPS is disabled by default; date handling moved to DateTimeFeature).
+  #   * BigDecimal amounts serialize as plain JSON numbers by default (the old
+  #     WRITE_BIGDECIMAL_AS_PLAIN is no longer a SerializationFeature member in Jackson 3).
+  # These defaults already preserve the shared Axon event JSON contract shape in contracts/events/
+  # (occurredAt as ISO-8601, amount as a JSON number consistent with NUMERIC(19,2) on the read model).
+  # The stable event *type name* (WalletCreated / MoneyDeposited / MoneyWithdrawn / MoneyTransferred)
+  # is set separately by the MessageTypeResolver bean in infrastructure/AxonConfig.java.
+
+server:
+  # Container-internal port; mapped to host 8081 by compose.yml.
+  port: 8080
+
+# Axon Server connection (context: wallet). Values are overridden via environment
+# variables in compose.yml (AXON_SERVER_HOST / AXON_SERVER_PORT / AXON_SERVER_CONTEXT).
+# With the axoniq-spring-boot-starter + axon-server-connector on the classpath, domain events
+# appended through the EventAppender are stored in — and published from — this context
+# (requirements 6.3, 7.1).
+axon:
+  # Explicitly enable the Axon Server connection. Without the connector + this flag the app
+  # silently falls back to an in-memory event store and never talks to Axon Server.
+  axonserver:
+    enabled: true
+    servers: ${AXON_SERVER_HOST:localhost}:${AXON_SERVER_PORT:8124}
+    context: ${AXON_SERVER_CONTEXT:wallet}
+  # JSON event serialization (matches the official Axon 5 Spring Boot 4 sample and the shared
+  # event JSON contract in contracts/events/).
+  converter:
+    general: jackson
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
