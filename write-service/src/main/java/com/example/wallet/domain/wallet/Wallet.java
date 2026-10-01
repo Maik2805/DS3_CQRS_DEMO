@@ -17,42 +17,28 @@ import com.example.wallet.domain.wallet.events.WalletCreated;
 import com.example.wallet.domain.wallet.exceptions.InvalidCommandException;
 
 /**
- * Event-sourced <strong>creation</strong> entity for a wallet, following the official Axon
- * Framework 5 Spring Boot 4 sample pattern for entity creation (slice {@code createcourse},
- * class {@code CourseCreation} in {@code AxonIQ/AxonFramework} →
- * {@code examples/university-java-springboot-4}). This is <em>Pattern A</em> from that sample:
- * an entity annotated with the Spring stereotype {@link EventSourced} that owns a
- * <strong>static</strong> {@link CommandHandler} for the creation command plus an
- * {@link EntityCreator} constructor that takes the <em>creation event</em>.
+ * Event-sourced <strong>wallet</strong> entity and <strong>creation</strong> command handler,
+ * following the official Axon Framework 5 Spring Boot 4 sample pattern for entity creation (slice
+ * {@code createcourse}, class {@code CourseCreation} in {@code examples/university-java-springboot-4}).
+ * This is <em>Pattern A</em>: a {@link EventSourced} entity owning a <strong>static</strong>
+ * {@link CommandHandler} for the creation command plus an {@link EntityCreator} constructor that
+ * takes the creation event.
  *
- * <h2>Why this fixes the {@code EntityNotFoundException}</h2>
- * <p>The static creation {@link CommandHandler} takes only the command and an {@link EventAppender}
- * — it does <strong>not</strong> take an {@code @InjectEntity} parameter, so Axon never tries to
- * load (event-source) a not-yet-existing wallet for {@code CreateWallet}. That is exactly why the
- * sample's create path never throws {@code EntityNotFoundException}. Deposit/withdraw and transfer
- * live in separate {@code @Component} handlers with their own nested state entities
- * ({@code WalletCommandHandler.WalletState}, {@code TransferCommandHandler.TransferState}).</p>
+ * <h2>Why a static creation handler (and why duplicate rejection is handled at the API edge)</h2>
+ * <p>The static creation handler takes only the command and an {@link EventAppender}; it does NOT
+ * {@code @InjectEntity}, so Axon never event-sources a not-yet-existing wallet for {@code
+ * CreateWallet}. This is what reliably avoids {@code EntityNotFoundException} on the first command
+ * — a problem that reappears if creation is modeled with an injected state entity, because the
+ * convention-based {@code @InjectEntity} loader treats "zero events" as a missing entity.</p>
  *
- * <h2>Duplicate-wallet handling (deviation, documented)</h2>
- * <p>A static creation handler cannot see prior wallet state, so it cannot reject a duplicate
- * {@code CreateWallet} the way the old code did. Matching the sample ({@code CourseCreation.handle}
- * does not guard for pre-existence), this handler always appends {@link WalletCreated} on valid
- * input. Under Axon Server the append is still consistency-checked on the wallet's tag stream, but
- * an explicit {@code DuplicateWalletException} (HTTP 409) is no longer raised from creation. This
- * is the documented deviation requested when adopting the sample pattern.</p>
- *
- * <h2>Annotations (verified against the sample)</h2>
- * <ul>
- *   <li>{@link EventSourced} — {@code org.axonframework.extension.spring.stereotype.EventSourced}
- *       (Spring stereotype, auto-detected — no programmatic registration). {@code tagKey} is the
- *       wallet id tag; {@code idType} is {@code String} (free-form POC ids).</li>
- *   <li>{@link CommandHandler} — {@code org.axonframework.messaging.commandhandling.annotation.CommandHandler},
- *       here a {@code static} method for the creation command.</li>
- *   <li>{@link EntityCreator} — {@code org.axonframework.eventsourcing.annotation.reflection.EntityCreator},
- *       a constructor that takes the {@link WalletCreated} creation event.</li>
- *   <li>{@link EventSourcingHandler} — {@code org.axonframework.eventsourcing.annotation.EventSourcingHandler},
- *       {@code void} fold methods that evolve balance as later events are applied.</li>
- * </ul>
+ * <p>Because a static handler cannot read prior state, it cannot itself reject a duplicate. The
+ * duplicate rule is still enforced authoritatively: when a {@code CreateWallet} targets a
+ * {@code walletId} that already has events, Axon Server's creational consistency check rejects the
+ * append and the framework raises {@code EntityAlreadyExistsForCreationalCommandHandlerException}.
+ * The write-side {@code GlobalExceptionHandler} translates that into the domain-meaningful
+ * {@code DuplicateWalletException} semantics and returns <strong>HTTP 409 Conflict</strong> with a
+ * clean message — never a 500. This also covers the concurrent double-create race for free, since
+ * the consistency check is evaluated at append time on the single wallet tag stream.</p>
  *
  * <h2>Monetary arithmetic</h2>
  * <p>All money is {@link BigDecimal} at {@link #MONEY_SCALE scale 2} using
@@ -83,11 +69,12 @@ public class Wallet {
     private BigDecimal balance;
 
     /**
-     * Static creation command handler for {@link CreateWallet} (Pattern A, sample
-     * {@code CourseCreation.handle}). Validates non-blank {@code walletId}/{@code ownerId} and the
-     * fixed {@code COP} currency, then appends exactly one {@link WalletCreated} event. Takes no
-     * {@code @InjectEntity} parameter, so no wallet is event-sourced for a create — this is what
-     * avoids {@code EntityNotFoundException} on the first command (requirements 1.1–1.4).
+     * Static creation command handler for {@link CreateWallet} (Pattern A). Validates non-blank
+     * {@code walletId}/{@code ownerId} and the fixed {@code COP} currency, then appends exactly one
+     * {@link WalletCreated}. Takes no {@code @InjectEntity} parameter, so no wallet is event-sourced
+     * for a create — this avoids {@code EntityNotFoundException} on the first command (requirements
+     * 1.1-1.4). A duplicate {@code CreateWallet} is rejected by Axon Server''s creational
+     * consistency check on append and mapped to HTTP 409 by {@code GlobalExceptionHandler}.
      *
      * @param command  the create-wallet intent
      * @param appender appends the resulting {@link WalletCreated} into the current unit of work
@@ -97,15 +84,12 @@ public class Wallet {
         requireNonBlank(command.walletId(), "walletId");
         requireNonBlank(command.ownerId(), "ownerId");
         requireSupportedCurrency(command.currency());
-        // NOTE (deviation): matching the sample's CourseCreation.handle, we do NOT guard duplicate
-        // creation here — a static creation handler cannot read prior state. Always append on valid
-        // input; Axon Server still consistency-checks the append against the wallet's tag stream.
         appender.append(WalletCreated.of(command.walletId(), command.ownerId(), command.currency()));
     }
 
     /**
-     * Entity creator invoked from the {@link WalletCreated} creation event (Pattern A). Initializes
-     * identity and a {@code 0.00} balance (requirement 1.4).
+     * Entity creator invoked from the {@link WalletCreated} creation event. Initializes identity and
+     * a {@code 0.00} balance (requirement 1.4).
      *
      * @param event the wallet creation fact that begins this wallet's event stream
      */
@@ -120,7 +104,7 @@ public class Wallet {
 
     /**
      * Folds a {@link MoneyDeposited} fact: increases the balance by the deposited amount
-     * (requirement 2.5). Returns {@code void} per the sample's fold shape.
+     * (requirement 2.5).
      *
      * @param event the deposit fact
      */

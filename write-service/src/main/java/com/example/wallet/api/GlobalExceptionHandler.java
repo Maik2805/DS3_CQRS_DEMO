@@ -90,22 +90,109 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Maps an Axon {@link CommandExecutionException} by unwrapping its cause chain. If a
-     * {@link WalletDomainException} is found it is mapped per the domain table; any other cause is
-     * an unexpected server-side failure and becomes a 500 with a generic message (detail logged).
+     * Maps an Axon {@link CommandExecutionException} to the right HTTP status.
+     *
+     * <p><strong>Why message-based matching.</strong> With the Axon Server distributed command bus,
+     * an exception thrown by the (remote) command handler is NOT transported back as its original
+     * Java type — it arrives wrapped in an {@code AxonServerRemoteCommandHandlingException} whose
+     * <em>message</em> carries the original exception''s class name and text. So {@code instanceof}
+     * on the cause chain never matches a {@link WalletDomainException} (nor the framework''s
+     * creation/consistency exceptions). We therefore classify by scanning the cause-chain messages
+     * for the originating type name. This covers:</p>
+     * <ul>
+     *   <li>domain rule violations ({@code InvalidCommandException}, {@code InvalidAmountException},
+     *       {@code WalletNotFoundException}, {@code DuplicateWalletException},
+     *       {@code InsufficientFundsException}, {@code SelfTransferException},
+     *       {@code DuplicateTransferException}, {@code CurrencyMismatchException});</li>
+     *   <li>framework creation/consistency failures: an already-existing creational entity →
+     *       409 (duplicate wallet), and a missing target entity → 404.</li>
+     * </ul>
+     * <p>If a wallet domain exception DID propagate in-process (unwrapped), it is still handled by
+     * {@link #handleWalletDomainException(WalletDomainException)} before reaching here. Anything we
+     * cannot classify is a genuine 500 (detail logged, generic body returned).</p>
      *
      * @param exception the wrapping command-execution exception surfaced by {@code sendAndWait}
      * @return the mapped error response
      */
     @ExceptionHandler(CommandExecutionException.class)
     public ResponseEntity<Map<String, Object>> handleCommandExecutionException(CommandExecutionException exception) {
+        // First, if a concrete domain exception instance did survive on the chain (in-process), map it.
         WalletDomainException domain = findDomainCause(exception);
         if (domain != null) {
             return toResponse(statusFor(domain), domain.getMessage());
         }
+        // Otherwise classify by the cause-chain messages (distributed command bus case).
+        String chain = causeChainText(exception);
+
+        // 409 — duplicate wallet (domain rule) or the framework''s creational-consistency rejection.
+        if (chain.contains("DuplicateWalletException")
+                || chain.contains("EntityAlreadyExistsForCreationalCommandHandlerException")
+                || chain.contains("already existing entity")) {
+            return toResponse(HttpStatus.CONFLICT, "The wallet already exists.");
+        }
+        // 409 — other conflict rules.
+        if (chain.contains("InsufficientFundsException")
+                || chain.contains("SelfTransferException")
+                || chain.contains("DuplicateTransferException")) {
+            return toResponse(HttpStatus.CONFLICT, firstLine(chain));
+        }
+        // 422 — semantic violation (currency mismatch).
+        if (chain.contains("CurrencyMismatchException")) {
+            return toResponse(HttpStatus.UNPROCESSABLE_CONTENT, firstLine(chain));
+        }
+        // 404 — target wallet does not exist (domain rule or framework entity-not-found).
+        if (chain.contains("WalletNotFoundException")
+                || chain.contains("EntityNotFoundException")
+                || chain.contains("No entity found for identifier")) {
+            return toResponse(HttpStatus.NOT_FOUND, "Wallet not found.");
+        }
+        // 400 — invalid command / invalid amount.
+        if (chain.contains("InvalidAmountException")
+                || chain.contains("InvalidCommandException")) {
+            return toResponse(HttpStatus.BAD_REQUEST, firstLine(chain));
+        }
         return handleUnexpected(exception);
     }
 
+    /**
+     * Concatenates the messages of every exception in {@code throwable}''s cause chain, so a single
+     * {@code contains(...)} check can classify a failure regardless of how deep the originating
+     * message sits (wrapped by the Axon Server connector, then by {@code CommandExecutionException}).
+     *
+     * @param throwable the exception whose cause chain to flatten
+     * @return the joined messages (never {@code null})
+     */
+    private static String causeChainText(Throwable throwable) {
+        StringBuilder sb = new StringBuilder();
+        Throwable current = throwable;
+        while (current != null) {
+            if (current.getMessage() != null) {
+                sb.append(current.getMessage()).append('\n');
+            }
+            current = current.getCause();
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Extracts a clean, human-readable first line from a flattened cause chain for use as the client
+     * message. Falls back to a generic phrase when nothing useful is present.
+     *
+     * @param chain the flattened cause-chain text
+     * @return the first non-blank line, or a generic conflict phrase
+     */
+    private static String firstLine(String chain) {
+        for (String line : chain.split("\n")) {
+            String trimmed = line.trim();
+            // Strip a leading "fully.qualified.ExceptionType: " prefix if present.
+            int colon = trimmed.indexOf(": ");
+            String candidate = colon >= 0 ? trimmed.substring(colon + 2).trim() : trimmed;
+            if (!candidate.isBlank()) {
+                return candidate;
+            }
+        }
+        return "Request could not be processed.";
+    }
     /**
      * Maps a malformed / unreadable request body (invalid JSON, wrong types Jackson cannot bind) to
      * {@code 400 Bad Request} (requirement 16.1). The parser detail is not echoed to the client.
